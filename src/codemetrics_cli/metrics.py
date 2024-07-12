@@ -8,28 +8,69 @@ import argparse
 import math
 from datetime import datetime, timedelta
 from uniplot import plot
+from pathlib import Path
 import numpy as np
 
-metrics_github_repo = "https://github.com/dotnet/roslyn-analyzers.git"
+current_path = os.getcwd()
+roslyn_github_repo = "https://github.com/dotnet/roslyn-analyzers.git"
 homedir = os.path.expanduser("~")
 internal_stuff_path = os.path.join(homedir, ".metrics_scratch")
 cloned_repos = os.path.join(internal_stuff_path, "repos")
 metrics_exe = os.path.join(internal_stuff_path, "roslyn-analyzers", "artifacts", "bin", "Metrics", "Release", "net472", "Metrics.exe")
-main_path = os.getcwd()
 remote_url = ""
+main_repo_path = ""
 shadow_repo_path = ""
+working_repo_path = ""
 verbose = False
 
 GITIGNORED_FILES_THAT_AFFECT_THE_BUILD = []
 
-def internal_setup(args):
-    global shadow_repo_path, remote_url, verbose
+def figure_out_paths_get_target(args, use_shadow_repo):
+    global shadow_repo_path, remote_url, verbose, main_repo_path
 
     verbose = args.verbose
-    remote_url = subprocess.run(["git", "remote", "get-url", args.origin], capture_output=True, check=True).stdout.decode("utf-8").replace("\n", "")
+    
+    if args.solution is not None:
+        anchor = args.solution
+    else:
+        anchor = args.project
+    
+    anchor = Path(anchor).absolute()
+    chdir(anchor.parent)
+    
+    # okay. so. we need a proper path for a target file to pass along to metrics.exe
+    # user is providing either an absolute or a relative version of this path
+    # however, we may need to run it against a shadow repo
+    # so need to sub
+    
+    main_repo_path = Path(run_cmd_checked(["git", "rev-parse", "--show-toplevel"], capture_output=True).stdout.decode("utf-8").replace("\n", "")).absolute().__str__()
+    remote_url = run_cmd_checked(["git", "remote", "get-url", args.origin], capture_output=True).stdout.decode("utf-8").replace("\n", "")
     repo_name = remote_url.split("/")[-1]
-    shadow_repo_path = os.path.join(cloned_repos, repo_name)
+    shadow_repo_path = Path(os.path.join(cloned_repos, repo_name)).absolute().__str__()
+    chdir(current_path)
+    
+    if args.solution is not None:
+        is_solution = True
+        args.solution = Path(args.solution).absolute().resolve().__str__()
+        if use_shadow_repo:
+            target_path = args.solution.replace(main_repo_path, shadow_repo_path)
+        else:
+            target_path = args.solution
 
+        target = (is_solution, target_path)
+    elif args.project is not None:
+        is_solution = False
+        args.project = Path(args.project).absolute().resolve().__str__()
+        if use_shadow_repo:
+            target_path = args.project.replace(main_repo_path, shadow_repo_path)
+        else:
+            target_path = args.project
+
+        target = (is_solution, target_path)
+    
+    return target
+
+def internal_setup(args):
     install_metrics_tool()
 
     if not os.path.isdir(cloned_repos):
@@ -37,11 +78,11 @@ def internal_setup(args):
     
     update_shadow_repo(args.force_update, args.main_branch)
 
-def main():
+def cli():
     parser = argparse.ArgumentParser(description="CodeMetrics CLI helper for dotnet projects")
     parser.add_argument('-p', '--project', help="Project to analyze")
     parser.add_argument('-s', '--solution', help="Solution to analyze")
-    parser.add_argument('-n', '--namespace', help="Show metrics for all types within a namespace")
+    parser.add_argument('-n', '--namespace', help="Show metrics for all types within a namespace (when analyzing a project)")
     parser.add_argument('-c', '--commit', help="git commit hash to use for metrics")
     parser.add_argument('-dc', '--diff_commits', help="fromHash:untilHash, compare metrics at these two states of the repo")
     parser.add_argument('-dd', '--diff_dates', help="fromDate:untilDate, compare metrics at these two points in time")
@@ -50,26 +91,26 @@ def main():
     parser.add_argument('-b', '--baseline', help="git commit hash to set as a baseline for metrics comparisons")
     parser.add_argument('-o', '--origin', default="origin", help="Name of upstream git remote")
     parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo and always recalculate metrics regarding of cache state")
-    parser.add_argument('-m', '--main_branch', default="master", help="Name of the main integration branch")
+    parser.add_argument('-m', '--main_branch', default="master", help="Name of the branch on which to run analysis; defaults to 'master'")
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Print out in detail of what's going on")
     args = parser.parse_args()
-
-    internal_setup(args)
     
-    if args.diff_dates is not None or args.diff_commits is not None or args.baseline is not None or args.commit is not None:
-        code_path = shadow_repo_path
-    else:
-        code_path = main_path
+    # TODO:
+    # - add usage samples
+    # - absolute or % change for table diff
+    # - plot by commits
     
-    if args.solution is not None:
-        is_solution = True
-        target = (is_solution, os.path.join(code_path, args.solution))
-    elif args.project is not None:
-        is_solution = False
-        target = (is_solution, os.path.join(code_path, args.project))
-    else:
+    if args.solution is None and args.project is None:
         parser.print_usage()
         exit(1)
+    
+    use_shadow_repo = False
+    if args.diff_dates is not None or args.diff_commits is not None or args.baseline is not None or args.commit is not None:
+        use_shadow_repo = True
+    
+    target = figure_out_paths_get_target(args, use_shadow_repo)
+    is_solution = target[0]
+    internal_setup(args)
 
     if args.commit is not None:
         metrics_xml = gather_metrics(target, args.force_update, args.commit)
@@ -177,7 +218,7 @@ def gather_metrics(target, force_update, commit_hash):
         chdir(shadow_repo_path)
         run_cmd(["git", "checkout", commit_hash])
     else:
-        chdir(main_path)
+        chdir(main_repo_path)
 
     repo_hash = current_repo_hash(target)
     metrics_out = os.path.join(internal_stuff_path, f"{repo_hash}.xml")
@@ -315,31 +356,31 @@ def update_shadow_repo(update, main_branch):
             chdir(shadow_repo_path)
             run_cmd(["git", "checkout", main_branch])
             run_cmd(["git", "pull"])
-            chdir(main_path)
+            chdir(main_repo_path)
     else:
         print("Cloning shadow repo...")
         chdir(cloned_repos)
         run_cmd(["git", "clone", remote_url])
-        chdir(main_path)
+        chdir(main_repo_path)
 
 def install_metrics_tool():
     if os.path.isfile(metrics_exe):
         return
     
     print(f"Metrics.exe not found in {metrics_exe}, installing...")
-    
     run_cmd(["winget", "install", "Microsoft.DotNet.SDK.Preview"])
 
     if not os.path.isdir(internal_stuff_path):
         os.mkdir(internal_stuff_path)
 
     chdir(internal_stuff_path)
-    run_cmd(["git", "clone", metrics_github_repo])
+    run_cmd(["git", "clone", roslyn_github_repo])
     chdir("roslyn-analyzers")
     run_cmd(["Restore.cmd"])
     chdir("src\Tools\Metrics")
+    print(f"Make sure you have 'msbuild' on PATH. It'll be used to build Metrics.exe")
     run_cmd(["msbuild", "/m", "/v:m", "/p:Configuration=Release", "Metrics.csproj"])
-    chdir(main_path)
+    chdir(main_repo_path)
 
 def current_repo_hash(target):
     is_solution, target_path = target
@@ -427,6 +468,3 @@ def run_cmd_checked(*args, **kwargs):
         print(f"Running cmd: {args}")
 
     return subprocess.run(*args, **kwargs)
-
-if __name__ == "__main__":
-    main()
