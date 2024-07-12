@@ -132,19 +132,24 @@ def cli():
         date_until = datetime.strptime(dates[1], "%Y-%m-%d")
         step = args.step_days
         
+        print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step} day(s){Color.OFF}")
+        
         plot_rows = []
         calc_date = date_until
-        check_dates = []
+        check_dates_hashes = []
         while calc_date >= date_from:
-            check_dates.append(calc_date.strftime("%Y-%m-%d"))
+            check_date = calc_date.strftime("%Y-%m-%d")
+            check_hash = run_cmd(["git", "log", f"--until={check_date}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
+            check_dates_hashes.append((check_date, check_hash))
             calc_date = calc_date - timedelta(days=int(step))
         
-        for check_date in check_dates:
-            check_hash = run_cmd(["git", "log", f"--until={check_date}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
-            check_xml = gather_metrics(target, args.force_update, check_hash)
+        print(f"{Color.GREEN}Resolved to following dates/commits: {check_dates_hashes}{Color.OFF}")
+    
+        for (date, commit) in check_dates_hashes:
+            check_xml = gather_metrics(target, args.force_update, commit)
             headers, rows = process_metrics(check_xml, is_solution, args.namespace)
             total_row = rows[-1:]
-            total_row[0][0] = check_date
+            total_row[0][0] = date
             plot_rows.extend(total_row)
             
         headers[0] = f"{Color.MAGENTA}Date{Color.OFF}"
@@ -180,6 +185,7 @@ def cli():
     elif args.diff_commits is not None:
         hashes = args.diff_commits.split(":")
         hash_before, hash_after = hashes[0], hashes[1]
+        print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
         do_diff(target, args, is_solution, hash_before, hash_after)
         
     elif args.baseline is not None:
@@ -450,21 +456,27 @@ def current_repo_hash(target):
 
 def chdir(path):
     if verbose:
-        print(f"chdir {path}")
+        print(f"{Color.BLUE}chdir {path}{Color.OFF}")
 
     os.chdir(path)
 
 def run_cmd(*args, **kwargs):
     if verbose:
-        print(f"Running cmd: {args}")
+        print(f"{Color.BLUE}Running cmd: {args}{Color.OFF}")
     
-    return subprocess.run(*args, **kwargs)
+    print(f"{Color.DEFAULT}", end='')
+    res = subprocess.run(*args, **kwargs)
+    print(f"{Color.OFF}", end='')
+    return res
 
 def run_cmd_checked(*args, **kwargs):
     """Run a command, throwing an exception if it exits with non-zero status."""
     kwargs["check"] = True
 
     if verbose:
-        print(f"Running cmd: {args}")
+        print(f"{Color.BLUE}Running cmd: {args}{Color.OFF}")
 
-    return subprocess.run(*args, **kwargs)
+    print(f"{Color.DEFAULT}", end='')
+    res = subprocess.run(*args, **kwargs)
+    print(f"{Color.OFF}", end='')
+    return res
