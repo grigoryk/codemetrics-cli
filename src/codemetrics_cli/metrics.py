@@ -70,13 +70,13 @@ def figure_out_paths_get_target(args, use_shadow_repo):
     
     return target
 
-def internal_setup(args):
+def internal_setup(force_update, force_update_hard, branch):
     install_metrics_tool()
 
     if not os.path.isdir(cloned_repos):
         os.mkdir(cloned_repos)
     
-    update_shadow_repo(args.force_update, args.branch)
+    update_shadow_repo(force_update, force_update_hard, branch)
 
 def cli():
     parser = argparse.ArgumentParser(description="CodeMetrics CLI helper for dotnet projects")
@@ -89,10 +89,13 @@ def cli():
     parser.add_argument('-st', '--step_days', help="When running diff_dates, take measurements at a specified day interval")
     parser.add_argument('-pl', '--plot', help="Plot results of diffing over time. Specify which metric to plot")
     parser.add_argument('-o', '--origin', default="origin", help="Name of upstream git remote")
-    parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo and always recalculate metrics regarding of cache state")
+    parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo by pulling remote and recalculate metrics regarding of cache state")
+    parser.add_argument('-ff', '--force_update_hard', action='store_true', help="Update shadow repo by deleting local branch and pulling remote and recalculate metrics regarding of cache state")
     parser.add_argument('-b', '--branch', default="master", help="Name of the branch on which to run analysis; defaults to 'master'")
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Print out in detail of what's going on")
     args = parser.parse_args()
+
+    recalculate_metrics = args.force_update or args.force_update_hard
     
     # TODO:
     # - add usage samples
@@ -109,10 +112,10 @@ def cli():
     
     target = figure_out_paths_get_target(args, use_shadow_repo)
     is_solution = target[0]
-    internal_setup(args)
+    internal_setup(args.force_update, args.force_update_hard, args.branch)
 
     if args.commit is not None:
-        metrics_xml = gather_metrics(target, args.force_update, args.commit)
+        metrics_xml = gather_metrics(target, recalculate_metrics, args.commit)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
 
@@ -123,7 +126,7 @@ def cli():
         hash_after = run_cmd(["git", "log", f"--until={date_until}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
         print(f"{Color.GREEN}Diff between {date_from} and {date_until}{Color.OFF}")
         print(f"{Color.GREEN}Dates resolved to commit range {hash_before}..{hash_after}{Color.OFF}")
-        do_diff(target, args, is_solution, hash_before, hash_after)
+        do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
     
     elif args.diff_dates is not None and args.step_days is not None:
         dates = args.diff_dates.split(":")
@@ -145,7 +148,7 @@ def cli():
         print(f"{Color.GREEN}Resolved to following dates/commits: {check_dates_hashes}{Color.OFF}")
     
         for (date, commit) in check_dates_hashes:
-            check_xml = gather_metrics(target, args.force_update, commit)
+            check_xml = gather_metrics(target, recalculate_metrics, commit)
             headers, rows = process_metrics(check_xml, is_solution, args.namespace)
             total_row = rows[-1:]
             total_row[0][0] = date
@@ -185,19 +188,19 @@ def cli():
         hashes = args.diff_commits.split(":")
         hash_before, hash_after = hashes[0], hashes[1]
         print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
-        do_diff(target, args, is_solution, hash_before, hash_after)
+        do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
 
     else:
-        metrics_xml = gather_metrics(target, args.force_update, None)
+        metrics_xml = gather_metrics(target, recalculate_metrics, None)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
 
-def do_diff(target, args, is_solution, hash_before, hash_after):
-    before_xml = gather_metrics(target, args.force_update, hash_before)
-    headers_0, rows_0 = process_metrics(before_xml, is_solution, args.namespace)
+def do_diff(target, recalculate_metrics, namespace, is_solution, hash_before, hash_after):
+    before_xml = gather_metrics(target, recalculate_metrics, hash_before)
+    headers_0, rows_0 = process_metrics(before_xml, is_solution, namespace)
 
-    after_xml = gather_metrics(target, args.force_update, hash_after)
-    headers_1, rows_1 = process_metrics(after_xml, is_solution, args.namespace)
+    after_xml = gather_metrics(target, recalculate_metrics, hash_after)
+    headers_1, rows_1 = process_metrics(after_xml, is_solution, namespace)
     
     headers, rows = diff_metrics(headers_0, rows_0, headers_1, rows_1)
     print_metrics(headers, rows)
@@ -344,13 +347,20 @@ def get_total_row(rows):
                 
     return total_row
 
-def update_shadow_repo(update, branch):
+def update_shadow_repo(update, update_hard, branch):
     if os.path.isdir(shadow_repo_path):
         if update:
-            print("Updating shadow repo...")
+            print("Updating shadow repo branch...")
             chdir(shadow_repo_path)
+            run_cmd(["git", "fetch", "--all"])
             run_cmd(["git", "checkout", branch])
             run_cmd(["git", "pull"])
+            chdir(main_repo_path)
+        elif update_hard:
+            print("Hard resetting shadow repo branch...")
+            chdir(shadow_repo_path)
+            run_cmd(["git", "fetch", "--all"])
+            run_cmd(["git", "reset", "--hard", branch])
             chdir(main_repo_path)
     else:
         print("Cloning shadow repo...")
