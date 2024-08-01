@@ -76,7 +76,7 @@ def internal_setup(args):
     if not os.path.isdir(cloned_repos):
         os.mkdir(cloned_repos)
     
-    update_shadow_repo(args.force_update, args.main_branch)
+    update_shadow_repo(args.force_update, args.branch)
 
 def cli():
     parser = argparse.ArgumentParser(description="CodeMetrics CLI helper for dotnet projects")
@@ -88,10 +88,9 @@ def cli():
     parser.add_argument('-dd', '--diff_dates', help="fromDate:untilDate, compare metrics at these two points in time")
     parser.add_argument('-st', '--step_days', help="When running diff_dates, take measurements at a specified day interval")
     parser.add_argument('-pl', '--plot', help="Plot results of diffing over time. Specify which metric to plot")
-    parser.add_argument('-b', '--baseline', help="git commit hash to set as a baseline for metrics comparisons")
     parser.add_argument('-o', '--origin', default="origin", help="Name of upstream git remote")
     parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo and always recalculate metrics regarding of cache state")
-    parser.add_argument('-m', '--main_branch', default="master", help="Name of the branch on which to run analysis; defaults to 'master'")
+    parser.add_argument('-b', '--branch', default="master", help="Name of the branch on which to run analysis; defaults to 'master'")
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Print out in detail of what's going on")
     args = parser.parse_args()
     
@@ -105,7 +104,7 @@ def cli():
         exit(1)
     
     use_shadow_repo = False
-    if args.diff_dates is not None or args.diff_commits is not None or args.baseline is not None or args.commit is not None:
+    if args.diff_dates is not None or args.diff_commits is not None or args.commit is not None:
         use_shadow_repo = True
     
     target = figure_out_paths_get_target(args, use_shadow_repo)
@@ -187,16 +186,6 @@ def cli():
         hash_before, hash_after = hashes[0], hashes[1]
         print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
         do_diff(target, args, is_solution, hash_before, hash_after)
-        
-    elif args.baseline is not None:
-        baseline_xml = gather_metrics(target, args.force_update, args.baseline)
-        headers_0, rows_0 = process_metrics(baseline_xml, is_solution, args.namespace)
-
-        current_xml = gather_metrics(target, args.force_update, None)
-        headers_1, rows_1 = process_metrics(current_xml, is_solution, args.namespace)
-        
-        headers, rows = diff_metrics(headers_0, rows_0, headers_1, rows_1)
-        print_metrics(headers, rows)
 
     else:
         metrics_xml = gather_metrics(target, args.force_update, None)
@@ -355,12 +344,12 @@ def get_total_row(rows):
                 
     return total_row
 
-def update_shadow_repo(update, main_branch):
+def update_shadow_repo(update, branch):
     if os.path.isdir(shadow_repo_path):
         if update:
             print("Updating shadow repo...")
             chdir(shadow_repo_path)
-            run_cmd(["git", "checkout", main_branch])
+            run_cmd(["git", "checkout", branch])
             run_cmd(["git", "pull"])
             chdir(main_repo_path)
     else:
