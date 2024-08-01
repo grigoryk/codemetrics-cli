@@ -114,6 +114,10 @@ def cli():
     is_solution = target[0]
     internal_setup(args.force_update, args.force_update_hard, args.branch)
 
+    if (args.diff_commits is not None or args.commit is not None) and not check_presence_of_commits(use_shadow_repo, args.diff_commits, args.commit):
+        print("Invalid commits supplied, check your inputs or try rerunning with -f or -ff")
+        exit(1)
+
     if args.commit is not None:
         metrics_xml = gather_metrics(target, recalculate_metrics, args.commit)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
@@ -194,6 +198,27 @@ def cli():
         metrics_xml = gather_metrics(target, recalculate_metrics, None)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
+
+def check_presence_of_commits(use_shadow_repo, diff_commits, commit):
+    repo = main_repo_path
+    if use_shadow_repo:
+        repo = shadow_repo_path
+
+    to_check = []
+    if diff_commits is not None:
+        hashes = diff_commits.split(":")
+        to_check.append(hashes[0])
+        to_check.append(hashes[1])
+    elif commit is not None:
+        to_check.append(commit)
+    
+    for hash in to_check:
+        chdir(repo)
+        out = run_cmd(["git", "cat-file", "-t", hash], capture_output=True).stdout.decode("utf-8").replace("\n", "")
+        if out != "commit":
+            print("Commit with hash {} does not exist", hash)
+            return False
+    return True
 
 def do_diff(target, recalculate_metrics, namespace, is_solution, hash_before, hash_after):
     before_xml = gather_metrics(target, recalculate_metrics, hash_before)
@@ -382,7 +407,7 @@ def install_metrics_tool():
     run_cmd(["git", "clone", roslyn_github_repo])
     chdir("roslyn-analyzers")
     run_cmd(["Restore.cmd"])
-    chdir("src\Tools\Metrics")
+    chdir("src\\Tools\\Metrics")
     print(f"Make sure you have 'msbuild' on PATH. It'll be used to build Metrics.exe")
     run_cmd(["msbuild", "/m", "/v:m", "/p:Configuration=Release", "Metrics.csproj"])
     chdir(main_repo_path)
