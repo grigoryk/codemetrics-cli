@@ -1,3 +1,4 @@
+import sys
 import os
 import hashlib
 import subprocess
@@ -188,7 +189,8 @@ def compute_metrics_for_commits_and_plot(label_title, labeled_commits, target, r
 
     plot_rows = []
 
-    for (label, commit) in labeled_commits:
+    for i, (label, commit) in enumerate(labeled_commits):
+        print(f"{Color.GREEN}Processing {i + 1} / {len(labeled_commits)}{Color.OFF}")
         check_xml = gather_metrics(target, recalculate_metrics, commit)
         headers, rows = process_metrics(check_xml, is_solution, namespace)
         total_row = rows[-1:]
