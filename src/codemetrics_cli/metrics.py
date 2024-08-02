@@ -86,7 +86,7 @@ def cli():
     parser.add_argument('-c', '--commit', help="git commit hash to use for metrics")
     parser.add_argument('-dc', '--diff_commits', help="fromHash:untilHash, compare metrics at these two states of the repo")
     parser.add_argument('-dd', '--diff_dates', help="fromDate:untilDate, compare metrics at these two points in time")
-    parser.add_argument('-st', '--step_days', help="When running diff_dates, take measurements at a specified day interval")
+    parser.add_argument('-st', '--step', help="When running diff_dates or diff_commits, take measurements at a specified day or commit interval")
     parser.add_argument('-pl', '--plot', help="Plot results of diffing over time. Specify which metric to plot")
     parser.add_argument('-o', '--origin', default="origin", help="Name of upstream git remote")
     parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo by pulling remote and recalculate metrics regarding of cache state")
@@ -123,8 +123,8 @@ def cli():
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
 
-    elif args.diff_dates is not None and args.step_days is None:
-        dates = args.diff_dates.split(":")
+    elif args.diff_dates is not None and args.step is None:
+        dates = args.diff_dates.split("..")
         date_from, date_until = dates[0], dates[1]
         hash_before = run_cmd(["git", "log", f"--until={date_from}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
         hash_after = run_cmd(["git", "log", f"--until={date_until}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
@@ -132,15 +132,14 @@ def cli():
         print(f"{Color.GREEN}Dates resolved to commit range {hash_before}..{hash_after}{Color.OFF}")
         do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
     
-    elif args.diff_dates is not None and args.step_days is not None:
-        dates = args.diff_dates.split(":")
+    elif args.diff_dates is not None and args.step is not None:
+        dates = args.diff_dates.split("..")
         date_from = datetime.strptime(dates[0], "%Y-%m-%d")
         date_until = datetime.strptime(dates[1], "%Y-%m-%d")
-        step = args.step_days
+        step = args.step
         
         print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step} day(s){Color.OFF}")
         
-        plot_rows = []
         calc_date = date_until
         check_dates_hashes = []
         while calc_date >= date_from:
@@ -152,55 +151,84 @@ def cli():
             if calc_date < date_from:
                 calc_date = date_from
         
-        print(f"{Color.GREEN}Resolved to following dates/commits: {check_dates_hashes}{Color.OFF}")
+        compute_metrics_for_commits_and_plot("Date", check_dates_hashes, target, recalculate_metrics, is_solution, args.namespace, args.plot)
     
-        for (date, commit) in check_dates_hashes:
-            check_xml = gather_metrics(target, recalculate_metrics, commit)
-            headers, rows = process_metrics(check_xml, is_solution, args.namespace)
-            total_row = rows[-1:]
-            total_row[0][0] = date
-            plot_rows.extend(total_row)
-            
-        headers[0] = f"{Color.MAGENTA}Date{Color.OFF}"
-        print_metrics(headers, plot_rows)
-        
-        if args.plot is not None:
-            a = np.array(plot_rows)
-            t = np.transpose(a)
-            
-            if args.plot == "all":
-                metrics = ["MaintainabilityIndex", "CyclomaticComplexity", "ClassCoupling", "DepthOfInheritance", "SourceLines", "ExecutableLines"]
-            else:
-                metrics = args.plot.split(",")
-
-            for metric in metrics:
-                if metric == "MaintainabilityIndex":
-                    di = 1
-                elif metric == "CyclomaticComplexity":
-                    di = 2
-                elif metric == "ClassCoupling":
-                    di = 3
-                elif metric == "DepthOfInheritance":
-                    di = 4
-                elif metric == "SourceLines":
-                    di = 5
-                elif metric == "ExecutableLines":
-                    di = 6
-                
-                print()
-                plot(xs=[t[0]], ys=[t[di]], lines=True, title=metric)
-                print()
-    
-    elif args.diff_commits is not None:
-        hashes = args.diff_commits.split(":")
+    elif args.diff_commits is not None and args.step is None:
+        hashes = args.diff_commits.split("..")
         hash_before, hash_after = hashes[0], hashes[1]
         print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
         do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
+    
+    elif args.diff_commits is not None and args.step is not None:
+        hashes = args.diff_commits.split("..")
+        hash_before, hash_after = hashes[0], hashes[1]
+        print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}, checking every {args.step} commit(s){Color.OFF}")
+        
+        commits = []
+        # %h is to get abbrev-commit instead of full 40 byte commit hash, it looks nicer in the terminal.
+        # When inserting hash_before, truncate it in the same way assuming constant commit object name (aka commit hash) prefix length.
+        out = run_cmd(["git", "log", f"{hash_before}..{hash_after}", "--pretty=%h"], capture_output=True).stdout.decode("utf-8")
+        commits = out.split("\n")
+        commits[-1] = hash_before[:(len(commits[0]))] # last element from above split is empty line, and output excludes hash_before
+        commits.reverse()
+        labeled_commits = [(f"{i+1}: {c}", c) for (i, c) in enumerate(commits)]
+
+        compute_metrics_for_commits_and_plot("Commit", labeled_commits, target, recalculate_metrics, is_solution, args.namespace, args.plot)
 
     else:
         metrics_xml = gather_metrics(target, recalculate_metrics, None)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
+
+def compute_metrics_for_commits_and_plot(label_title, labeled_commits, target, recalculate_metrics, is_solution, namespace, should_plot):
+    if label_title == "Date":
+        print(f"{Color.GREEN}Resolved to following range: {labeled_commits}{Color.OFF}")
+    elif label_title == "Commit":
+        print(f"{Color.GREEN}Resolved to following range: {[c[1] for c in labeled_commits]}{Color.OFF}")
+
+    plot_rows = []
+
+    for (label, commit) in labeled_commits:
+        check_xml = gather_metrics(target, recalculate_metrics, commit)
+        headers, rows = process_metrics(check_xml, is_solution, namespace)
+        total_row = rows[-1:]
+        total_row[0][0] = label
+        plot_rows.extend(total_row)
+        
+    headers[0] = f"{Color.MAGENTA}{label_title}{Color.OFF}"
+    print_metrics(headers, plot_rows)
+    
+    if should_plot is not None:
+        a = np.array(plot_rows)
+        t = np.transpose(a)
+        
+        if should_plot == "all":
+            metrics = ["MaintainabilityIndex", "CyclomaticComplexity", "ClassCoupling", "DepthOfInheritance", "SourceLines", "ExecutableLines"]
+        else:
+            metrics = should_plot.split(",")
+
+        for metric in metrics:
+            if metric == "MaintainabilityIndex":
+                di = 1
+            elif metric == "CyclomaticComplexity":
+                di = 2
+            elif metric == "ClassCoupling":
+                di = 3
+            elif metric == "DepthOfInheritance":
+                di = 4
+            elif metric == "SourceLines":
+                di = 5
+            elif metric == "ExecutableLines":
+                di = 6
+            
+            print()
+
+            if label_title == "Date":
+                plot(xs=[t[0]], ys=[t[di]], lines=True, title=metric)
+            elif label_title == "Commit":
+                plot(xs=None, ys=[t[di]], lines=True, title=metric)
+
+            print()
 
 def check_presence_of_commits(use_shadow_repo, diff_commits, commit):
     repo = main_repo_path
@@ -209,7 +237,7 @@ def check_presence_of_commits(use_shadow_repo, diff_commits, commit):
 
     to_check = []
     if diff_commits is not None:
-        hashes = diff_commits.split(":")
+        hashes = diff_commits.split("..")
         to_check.append(hashes[0])
         to_check.append(hashes[1])
     elif commit is not None:
