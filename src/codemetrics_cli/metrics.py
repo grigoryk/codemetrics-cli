@@ -173,7 +173,7 @@ def cli():
         commits[-1] = hash_before[:(len(commits[0]))] # last element from above split is empty line, and output excludes hash_before
         commits.reverse()
         labeled_commits = [(f"{i+1}: {c}", c) for (i, c) in enumerate(commits)]
-
+        labeled_commits = labeled_commits[::int(args.step)]
         compute_metrics_for_commits_and_plot("Commit", labeled_commits, target, recalculate_metrics, is_solution, args.namespace, args.plot)
 
     else:
