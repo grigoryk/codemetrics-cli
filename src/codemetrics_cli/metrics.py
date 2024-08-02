@@ -273,7 +273,12 @@ def gather_metrics(target, force_update, commit_hash):
 
     if commit_hash is not None:
         chdir(shadow_repo_path)
-        repo_hash = commit_hash[:8] # abbrev-commit
+
+        # Take into account both target and commit.
+        contents_hash = hashlib.sha256()
+        contents_hash.update(str.encode(f"{metrics_cmd}{target_path}"))
+        contents_hash.update(str.encode(commit_hash[:8])) # abbrev-commit
+        repo_hash = contents_hash.hexdigest()
     else:
         repo_hash = current_repo_hash(target)
         chdir(main_repo_path)
@@ -374,10 +379,36 @@ def diff_metrics(show_abs, headers_0, rows_0, headers_1, rows_1):
                     else:
                         delta_row.append(f"{rounded}{value_symbol}")
         else:
-            for i in range(metric_count):
-                delta_row.append("∞")
+            # m only present in the "_1" aka "after".
+            # can't diff, so display either raw value or infinity symbol
+            for i in range(metric_count):   
+                if show_abs:
+                    delta_row.append(f"new: {int(metrics_1[m][i])}")
+                else:
+                    delta_row.append("∞")
         delta.append(delta_row)
     
+    # last row is the 'Total', separate it out for now
+    total_row = delta[-1]
+    delta.remove(delta[-1])
+    
+    # show what is no longer present in _1:
+    for m in metrics_0.keys():
+        if m in metrics_1:
+            continue
+        
+        delta_row = [m]
+        for i in range(metric_count):
+            if show_abs:
+                delta_row.append(f"{Color.GREEN}-{int(metrics_0[m][i])}{Color.OFF}")
+            else:
+                delta_row.append(f"{Color.GREEN}-100%{Color.OFF}")
+        delta.append(delta_row)
+    
+    print(delta[-9])
+
+    # add 'Total' row back in
+    delta.append(total_row)
     return headers_0, delta
 
 def print_metrics(headers, rows):
