@@ -98,8 +98,8 @@ def cli():
     recalculate_metrics = args.force_update or args.force_update_hard
     
     # TODO:
-    # - add usage samples
     # - absolute or % change for table diff
+    # - add usage samples
     # - plot by commits
     
     if args.solution is None and args.project is None:
@@ -148,6 +148,9 @@ def cli():
             check_hash = run_cmd(["git", "log", f"--until={check_date}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
             check_dates_hashes.append((check_date, check_hash))
             calc_date = calc_date - timedelta(days=int(step))
+            # Make sure to include date_from in the calculations.
+            if calc_date < date_from:
+                calc_date = date_from
         
         print(f"{Color.GREEN}Resolved to following dates/commits: {check_dates_hashes}{Color.OFF}")
     
