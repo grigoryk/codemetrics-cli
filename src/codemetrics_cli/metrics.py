@@ -89,6 +89,7 @@ def cli():
     parser.add_argument('-dd', '--diff_dates', help="fromDate..untilDate, compare metrics at these two points in time")
     parser.add_argument('-st', '--step', help="When running diff_dates or diff_commits, take measurements at a specified day or commit interval")
     parser.add_argument('-pl', '--plot', help="Plot results of diffing over time. Specify which metric to plot")
+    parser.add_argument('-a', '--absolute', action="store_true", help="Show absolute values instead of percentages when diffing")
     parser.add_argument('-o', '--origin', default="origin", help="Name of upstream git remote")
     parser.add_argument('-f', '--force_update', action='store_true', help="Update shadow repo by pulling remote and recalculate metrics regarding of cache state")
     parser.add_argument('-ff', '--force_update_hard', action='store_true', help="Update shadow repo by deleting local branch and pulling remote and recalculate metrics regarding of cache state")
@@ -131,7 +132,7 @@ def cli():
         hash_after = run_cmd(["git", "log", f"--until={date_until}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
         print(f"{Color.GREEN}Diff between {date_from} and {date_until}{Color.OFF}")
         print(f"{Color.GREEN}Dates resolved to commit range {hash_before}..{hash_after}{Color.OFF}")
-        do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
+        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
     
     elif args.diff_dates is not None and args.step is not None:
         dates = args.diff_dates.split("..")
@@ -158,7 +159,7 @@ def cli():
         hashes = args.diff_commits.split("..")
         hash_before, hash_after = hashes[0], hashes[1]
         print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
-        do_diff(target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
+        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
     
     elif args.diff_commits is not None and args.step is not None:
         hashes = args.diff_commits.split("..")
@@ -253,14 +254,14 @@ def check_presence_of_commits(use_shadow_repo, diff_commits, commit):
             return False
     return True
 
-def do_diff(target, recalculate_metrics, namespace, is_solution, hash_before, hash_after):
+def do_diff(show_abs, target, recalculate_metrics, namespace, is_solution, hash_before, hash_after):
     before_xml = gather_metrics(target, recalculate_metrics, hash_before)
     headers_0, rows_0 = process_metrics(before_xml, is_solution, namespace)
 
     after_xml = gather_metrics(target, recalculate_metrics, hash_after)
     headers_1, rows_1 = process_metrics(after_xml, is_solution, namespace)
     
-    headers, rows = diff_metrics(headers_0, rows_0, headers_1, rows_1)
+    headers, rows = diff_metrics(show_abs, headers_0, rows_0, headers_1, rows_1)
     print_metrics(headers, rows)
     
 def gather_metrics(target, force_update, commit_hash):
@@ -323,7 +324,7 @@ def process_metrics(metrics_xml, is_solution, namespace_filter):
         return headers, all_rows
 
 
-def diff_metrics(headers_0, rows_0, headers_1, rows_1):
+def diff_metrics(show_abs, headers_0, rows_0, headers_1, rows_1):
     if headers_0 != headers_1:
         raise SystemExit("Metric dimensions do not match")
     metric_count = len(headers_0) - 1 # -1 to account for 'Namespace' being part of headers, while it's not a metric
@@ -344,9 +345,15 @@ def diff_metrics(headers_0, rows_0, headers_1, rows_1):
                 if float(metrics_0[m][i]) == 0:
                     delta_row.append("∞")
                 else:
-                    perc_delta = 100 * (float(metrics_1[m][i]) - float(metrics_0[m][i])) / float(metrics_0[m][i])
+                    # absolute diff or % diff
+                    value_symbol = ""
+                    if show_abs:
+                        rounded = int(metrics_1[m][i] - metrics_0[m][i])
+                    else:
+                        perc_delta = 100 * (float(metrics_1[m][i]) - float(metrics_0[m][i])) / float(metrics_0[m][i])
+                        rounded = math.ceil(perc_delta * 100) / 100
+                        value_symbol = "%"
 
-                    rounded = math.ceil(perc_delta * 100) / 100
                     set_color = True
                     if m == "MaintainabilityIndex":
                         if rounded > 0:
@@ -363,9 +370,9 @@ def diff_metrics(headers_0, rows_0, headers_1, rows_1):
                         else:
                             set_color = False
                     if set_color:
-                        delta_row.append(f"{color}{rounded}%{Color.OFF}")
+                        delta_row.append(f"{color}{rounded}{value_symbol}{Color.OFF}")
                     else:
-                        delta_row.append(f"{rounded}%")
+                        delta_row.append(f"{rounded}{value_symbol}")
         else:
             for i in range(metric_count):
                 delta_row.append("∞")
