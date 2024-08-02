@@ -272,13 +272,14 @@ def gather_metrics(target, force_update, commit_hash):
 
     if commit_hash is not None:
         chdir(shadow_repo_path)
-        run_cmd(["git", "checkout", commit_hash])
+        repo_hash = commit_hash[:8] # abbrev-commit
     else:
+        repo_hash = current_repo_hash(target)
         chdir(main_repo_path)
 
-    repo_hash = current_repo_hash(target)
     metrics_out = os.path.join(internal_stuff_path, f"{repo_hash}.xml")
     if force_update or not os.path.isfile(metrics_out):
+        run_cmd(["git", "checkout", commit_hash])
         run_cmd([metrics_exe, f"/{metrics_cmd}:{target_path}", f"/o:{metrics_out}"], check=True)
     
     return metrics_out
