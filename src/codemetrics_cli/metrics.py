@@ -140,17 +140,23 @@ def cli():
         date_until = datetime.strptime(dates[1], "%Y-%m-%d")
         step = args.step
         
-        print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step} day(s){Color.OFF}")
+        print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step}, day(s) on branch {args.branch}{Color.OFF}")
         
         calc_date = date_until
         check_dates_hashes = []
-        while calc_date >= date_from:
+        stepped_over_date_from = False
+        while calc_date >= date_from and not stepped_over_date_from:
             check_date = calc_date.strftime("%Y-%m-%d")
             check_hash = run_cmd(["git", "log", f"--until={check_date}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
+            if check_hash == "":
+                print(f"Couldn't find a commit hash for a given date {check_date}; try adjusting your time range or force-updating via -f or -ff")
+                exit(1)
+
             check_dates_hashes.append((check_date, check_hash))
             calc_date = calc_date - timedelta(days=int(step))
             # Make sure to include date_from in the calculations.
             if calc_date < date_from:
+                stepped_over_date_from = True
                 calc_date = date_from
         
         compute_metrics_for_commits_and_plot("Date", check_dates_hashes, target, recalculate_metrics, is_solution, args.namespace, args.plot)
@@ -464,6 +470,7 @@ def update_shadow_repo(update, update_hard, branch):
         print("Cloning shadow repo...")
         chdir(cloned_repos)
         run_cmd(["git", "clone", remote_url])
+        run_cmd(["git", "checkout", branch])
         chdir(main_repo_path)
 
 def install_metrics_tool():
