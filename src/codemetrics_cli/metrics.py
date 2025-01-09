@@ -280,12 +280,13 @@ def gather_metrics(target, force_update, commit_hash):
         contents_hash.update(str.encode(commit_hash[:8])) # abbrev-commit
         repo_hash = contents_hash.hexdigest()
     else:
-        repo_hash = current_repo_hash(target)
         chdir(main_repo_path)
+        repo_hash = current_repo_hash(target)
 
     metrics_out = os.path.join(internal_stuff_path, f"{repo_hash}.xml")
     if force_update or not os.path.isfile(metrics_out):
-        run_cmd(["git", "checkout", commit_hash])
+        if commit_hash is not None:
+            run_cmd(["git", "checkout", commit_hash])
         run_cmd([metrics_exe, f"/{metrics_cmd}:{target_path}", f"/o:{metrics_out}"], check=True)
     
     return metrics_out
@@ -537,12 +538,13 @@ def current_repo_hash(target):
     # Skip files that don't exist, e.g. missing GITIGNORED_FILES_THAT_AFFECT_THE_BUILD. `hash-object` errors out if it gets
     # a non-existent file, so we hope that disk won't change between this filter and the cmd run just below.
     filtered_untracked = [nm for nm in untracked_files if os.path.isfile(nm)]
-    # Reading contents of the files is quite slow when there are lots of them, so delegate to `git hash-object`.
-    git_hash_object_cmd = ["git", "hash-object"]
-    git_hash_object_cmd.extend(filtered_untracked)
-    changes_untracked = run_cmd_checked(git_hash_object_cmd, capture_output=True).stdout
-    contents_hash.update(changes_untracked)
-    contents_hash.update(b"\x00")
+    if len(filtered_untracked) > 0:
+        # Reading contents of the files is quite slow when there are lots of them, so delegate to `git hash-object`.
+        git_hash_object_cmd = ["git", "hash-object"]
+        git_hash_object_cmd.extend(filtered_untracked)
+        changes_untracked = run_cmd_checked(git_hash_object_cmd, capture_output=True).stdout
+        contents_hash.update(changes_untracked)
+        contents_hash.update(b"\x00")
     
     hash = contents_hash.hexdigest()
     if verbose:
