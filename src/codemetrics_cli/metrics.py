@@ -140,7 +140,7 @@ def cli():
         date_until = datetime.strptime(dates[1], "%Y-%m-%d")
         step = args.step
         
-        print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step}, day(s) on branch {args.branch}{Color.OFF}")
+        print(f"{Color.GREEN}Diff between {date_from.date()} and {date_until.date()}, checking every {step} day(s), on branch {args.branch}{Color.OFF}")
         
         calc_date = date_until
         check_dates_hashes = []
@@ -459,13 +459,12 @@ def update_shadow_repo(update, update_hard, branch):
             run_cmd(["git", "fetch", "--all"])
             run_cmd(["git", "checkout", branch])
             run_cmd(["git", "pull"])
-            chdir(main_repo_path)
         elif update_hard:
             print("Hard resetting shadow repo branch...")
             chdir(shadow_repo_path)
             run_cmd(["git", "fetch", "--all"])
             run_cmd(["git", "reset", "--hard", branch])
-            chdir(main_repo_path)
+        chdir(main_repo_path)
     else:
         print("Cloning shadow repo...")
         chdir(cloned_repos)
