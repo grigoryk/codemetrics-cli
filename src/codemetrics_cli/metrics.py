@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 
 current_path = os.getcwd()
-roslyn_github_repo = "https://github.com/dotnet/roslyn-analyzers.git"
+roslyn_github_repo = "https://github.com/dotnet/roslyn.git"
 homedir = os.path.expanduser("~")
 internal_stuff_path = os.path.join(homedir, ".metrics_scratch")
 cloned_repos = os.path.join(internal_stuff_path, "repos")
-metrics_exe = os.path.join(internal_stuff_path, "roslyn-analyzers", "artifacts", "bin", "Metrics", "Release", "net472", "Metrics.exe")
+metrics_exe = os.path.join(internal_stuff_path, "roslyn", "artifacts", "bin", "Metrics", "Release", "net472", "Metrics.exe")
 remote_url = ""
 main_repo_path = ""
 shadow_repo_path = ""
@@ -484,11 +484,11 @@ def install_metrics_tool():
 
     chdir(internal_stuff_path)
     run_cmd(["git", "clone", roslyn_github_repo])
-    chdir("roslyn-analyzers")
+    chdir("roslyn")
     run_cmd(["Restore.cmd"])
-    chdir("src\\Tools\\Metrics")
-    print(f"Make sure you have 'msbuild' on PATH. It'll be used to build Metrics.exe")
-    run_cmd(["msbuild", "/m", "/v:m", "/p:Configuration=Release", "Metrics.csproj"])
+    chdir("src\\RoslynAnalyzers\\Tools\\Metrics")
+    print(f"Make sure you have 'dotnet' on PATH. 'dotnet build' will be used to build Metrics.exe")
+    run_cmd(["dotnet", "build", "/m", "/v:m", "/p:Configuration=Release", "Metrics.csproj"])
     chdir(main_repo_path)
 
 def current_repo_hash(target):
