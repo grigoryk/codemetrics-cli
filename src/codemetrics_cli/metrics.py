@@ -86,7 +86,7 @@ def cli():
     parser.add_argument('-n', '--namespace', help="Show metrics for all types within a namespace (when analyzing a project)")
     parser.add_argument('-c', '--commit', help="git commit hash to use for metrics")
     parser.add_argument('-dc', '--diff_commits', help="fromHash..untilHash, compare metrics at these two states of the repo")
-    parser.add_argument('-dd', '--diff_dates', help="fromDate..untilDate, compare metrics at these two points in time")
+    parser.add_argument('-dd', '--diff_dates', help="fromDate..untilDate, compare metrics at these two points in time, e.g. 2024-01-30..2025-01-30")
     parser.add_argument('-st', '--step', help="When running diff_dates or diff_commits, take measurements at a specified day or commit interval")
     parser.add_argument('-pl', '--plot', help="Plot results of diffing over time. Specify which metric to plot")
     parser.add_argument('-a', '--absolute', action="store_true", help="Show absolute values instead of percentages when diffing")
