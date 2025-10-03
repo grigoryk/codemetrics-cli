@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from uniplot import plot
 from pathlib import Path
 import numpy as np
+import csv
+import re
 
 current_path = os.getcwd()
 roslyn_github_repo = "https://github.com/dotnet/roslyn.git"
@@ -95,6 +97,8 @@ def cli():
     parser.add_argument('-ff', '--force_update_hard', action='store_true', help="Update shadow repo by deleting local branch and pulling remote and recalculate metrics regarding of cache state")
     parser.add_argument('-b', '--branch', default="master", help="Name of the branch on which to run analysis; defaults to 'master'")
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Print out in detail of what's going on")
+    parser.add_argument('-csv', '--csv', action='store_true', help="Export results to CSV file")
+    parser.add_argument('-csv_filename', '--csv_filename', help="Custom filename for CSV export (overrides auto-generated name)")
     args = parser.parse_args()
 
     recalculate_metrics = args.force_update or args.force_update_hard
@@ -124,6 +128,9 @@ def cli():
         metrics_xml = gather_metrics(target, recalculate_metrics, args.commit)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
+        if args.csv:
+            csv_filename = args.csv_filename if args.csv_filename else generate_csv_filename(args)
+            export_to_csv(headers, rows, csv_filename)
 
     elif args.diff_dates is not None and args.step is None:
         dates = args.diff_dates.split("..")
@@ -132,7 +139,7 @@ def cli():
         hash_after = run_cmd(["git", "log", f"--until={date_until}", "-n", "1", "--format=oneline"], capture_output=True).stdout.decode("utf-8").split(" ")[0]
         print(f"{Color.GREEN}Diff between {date_from} and {date_until}{Color.OFF}")
         print(f"{Color.GREEN}Dates resolved to commit range {hash_before}..{hash_after}{Color.OFF}")
-        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
+        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after, args)
     
     elif args.diff_dates is not None and args.step is not None:
         dates = args.diff_dates.split("..")
@@ -159,13 +166,13 @@ def cli():
                 stepped_over_date_from = True
                 calc_date = date_from
         
-        compute_metrics_for_commits_and_plot("Date", check_dates_hashes, target, recalculate_metrics, is_solution, args.namespace, args.plot)
+        compute_metrics_for_commits_and_plot("Date", check_dates_hashes, target, recalculate_metrics, is_solution, args.namespace, args.plot, args)
     
     elif args.diff_commits is not None and args.step is None:
         hashes = args.diff_commits.split("..")
         hash_before, hash_after = hashes[0], hashes[1]
         print(f"{Color.GREEN}Diff between {hash_before} and {hash_after}{Color.OFF}")
-        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after)
+        do_diff(args.absolute, target, recalculate_metrics, args.namespace, is_solution, hash_before, hash_after, args)
     
     elif args.diff_commits is not None and args.step is not None:
         hashes = args.diff_commits.split("..")
@@ -181,14 +188,17 @@ def cli():
         commits.reverse()
         labeled_commits = [(f"{i+1}: {c}", c) for (i, c) in enumerate(commits)]
         labeled_commits = labeled_commits[::int(args.step)]
-        compute_metrics_for_commits_and_plot("Commit", labeled_commits, target, recalculate_metrics, is_solution, args.namespace, args.plot)
+        compute_metrics_for_commits_and_plot("Commit", labeled_commits, target, recalculate_metrics, is_solution, args.namespace, args.plot, args)
 
     else:
         metrics_xml = gather_metrics(target, recalculate_metrics, None)
         headers, rows = process_metrics(metrics_xml, is_solution, args.namespace)
         print_metrics(headers, rows)
+        if args.csv:
+            csv_filename = args.csv_filename if args.csv_filename else generate_csv_filename(args)
+            export_to_csv(headers, rows, csv_filename)
 
-def compute_metrics_for_commits_and_plot(label_title, labeled_commits, target, recalculate_metrics, is_solution, namespace, should_plot):
+def compute_metrics_for_commits_and_plot(label_title, labeled_commits, target, recalculate_metrics, is_solution, namespace, should_plot, args):
     if label_title == "Date":
         print(f"{Color.GREEN}Resolved to following range: {labeled_commits}{Color.OFF}")
     elif label_title == "Commit":
@@ -206,6 +216,10 @@ def compute_metrics_for_commits_and_plot(label_title, labeled_commits, target, r
         
     headers[0] = f"{Color.MAGENTA}{label_title}{Color.OFF}"
     print_metrics(headers, plot_rows)
+    
+    if args.csv:
+        csv_filename = args.csv_filename if args.csv_filename else generate_csv_filename(args)
+        export_to_csv(headers, plot_rows, csv_filename)
     
     if should_plot is not None:
         a = np.array(plot_rows)
@@ -260,7 +274,7 @@ def check_presence_of_commits(use_shadow_repo, diff_commits, commit):
             return False
     return True
 
-def do_diff(show_abs, target, recalculate_metrics, namespace, is_solution, hash_before, hash_after):
+def do_diff(show_abs, target, recalculate_metrics, namespace, is_solution, hash_before, hash_after, args):
     before_xml = gather_metrics(target, recalculate_metrics, hash_before)
     headers_0, rows_0 = process_metrics(before_xml, is_solution, namespace)
 
@@ -269,6 +283,10 @@ def do_diff(show_abs, target, recalculate_metrics, namespace, is_solution, hash_
     
     headers, rows = diff_metrics(show_abs, headers_0, rows_0, headers_1, rows_1)
     print_metrics(headers, rows)
+    
+    if args.csv:
+        csv_filename = args.csv_filename if args.csv_filename else generate_csv_filename(args)
+        export_to_csv(headers, rows, csv_filename)
     
 def gather_metrics(target, force_update, commit_hash):
     is_solution, target_path = target
@@ -417,6 +435,68 @@ def diff_metrics(show_abs, headers_0, rows_0, headers_1, rows_1):
     # add 'Total' row back in
     delta.append(total_row)
     return headers_0, delta
+
+def strip_color_codes(text):
+    """Remove ANSI color codes from text."""
+    if isinstance(text, str):
+        # Remove ANSI color codes
+        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+        return ansi_escape.sub('', text)
+    return text
+
+def export_to_csv(headers, rows, filename):
+    """Export metrics data to CSV file."""
+    # Strip color codes from headers and rows
+    clean_headers = [strip_color_codes(h) for h in headers]
+    clean_rows = []
+    for row in rows:
+        clean_row = [strip_color_codes(str(cell)) for cell in row]
+        clean_rows.append(clean_row)
+    
+    # Write to CSV
+    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(clean_headers)
+        writer.writerows(clean_rows)
+    
+    print(f"{Color.GREEN}CSV exported to: {filename}{Color.OFF}")
+
+def generate_csv_filename(args):
+    """Generate a CSV filename based on command line options."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Determine target type
+    if args.solution:
+        target_name = Path(args.solution).stem
+        target_type = "solution"
+    else:
+        target_name = Path(args.project).stem
+        target_type = "project"
+    
+    # Determine operation type
+    if args.diff_dates:
+        dates = args.diff_dates.replace("..", "_to_")
+        operation = f"diff_dates_{dates}"
+    elif args.diff_commits:
+        commits = args.diff_commits.replace("..", "_to_")[:16]  # Truncate long hashes
+        operation = f"diff_commits_{commits}"
+    elif args.commit:
+        operation = f"commit_{args.commit[:8]}"
+    else:
+        operation = "metrics"
+    
+    # Add step if applicable
+    step_suffix = f"_step{args.step}" if args.step else ""
+    
+    # Add namespace if applicable
+    namespace_suffix = f"_ns_{args.namespace}" if args.namespace else ""
+    
+    filename = f"{target_type}_{target_name}_{operation}{step_suffix}{namespace_suffix}_{timestamp}.csv"
+    
+    # Sanitize filename
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    
+    return filename
 
 def print_metrics(headers, rows):
     print(tabulate(rows, headers=headers, tablefmt="fancy_grid"))
